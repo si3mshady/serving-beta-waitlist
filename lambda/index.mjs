@@ -9,18 +9,64 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'OPTIONS, POST, GET',
   'Access-Control-Allow-Headers': 'Content-Type',
-  'Content-Type': 'application/json',
 };
 
 export const handler = async (event) => {
-  if (event.requestContext?.http?.method === 'OPTIONS' || event.httpMethod === 'OPTIONS') {
+  const httpMethod = event.requestContext?.http?.method || event.httpMethod || 'GET';
+
+  if (httpMethod === 'OPTIONS') {
     return {
       statusCode: 200,
-      headers: corsHeaders,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'ok' }),
     };
   }
 
+  // GET Request: Serve live CSV directly over HTTPS with no-cache headers for Google Sheets
+  if (httpMethod === 'GET') {
+    try {
+      let submissions = [];
+      try {
+        const getObjectResp = await s3.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: JSON_KEY }));
+        const strData = await getObjectResp.Body.transformToString();
+        submissions = JSON.parse(strData);
+      } catch (err) {
+        submissions = [];
+      }
+
+      const csvHeader = 'Timestamp,Name,Email,Role / Interest,Signup Source\n';
+      const csvRows = submissions
+        .map(
+          (s) =>
+            `"${s.timestamp}","${escapeCsv(s.name)}","${escapeCsv(s.email)}","${escapeCsv(s.role)}","${escapeCsv(
+              s.source
+            )}"`
+        )
+        .join('\n');
+      const csvContent = csvHeader + csvRows;
+
+      return {
+        statusCode: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        },
+        body: csvContent,
+      };
+    } catch (err) {
+      console.error('GET CSV error:', err);
+      return {
+        statusCode: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Failed to generate CSV' }),
+      };
+    }
+  }
+
+  // POST Request: Save new waitlist submission
   try {
     let body = {};
     if (event.body) {
@@ -39,7 +85,7 @@ export const handler = async (event) => {
     if (!name || !email) {
       return {
         statusCode: 400,
-        headers: corsHeaders,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ result: 'error', message: 'Name and email are required.' }),
       };
     }
@@ -48,7 +94,7 @@ export const handler = async (event) => {
     if (!emailRegex.test(email)) {
       return {
         statusCode: 400,
-        headers: corsHeaders,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ result: 'error', message: 'Invalid email address format.' }),
       };
     }
@@ -68,7 +114,7 @@ export const handler = async (event) => {
     if (isDuplicate) {
       return {
         statusCode: 200,
-        headers: corsHeaders,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           result: 'duplicate',
           message: "You're already on the list! We will reach out when the next testing batch opens.",
@@ -120,7 +166,7 @@ export const handler = async (event) => {
 
     return {
       statusCode: 200,
-      headers: corsHeaders,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         result: 'success',
         message: "You're on the list. I'll send you the next steps for the SERVING beta.",
@@ -130,7 +176,7 @@ export const handler = async (event) => {
     console.error('Lambda handler error:', error);
     return {
       statusCode: 500,
-      headers: corsHeaders,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({ result: 'error', message: 'Internal server error processing waitlist request.' }),
     };
   }

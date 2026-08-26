@@ -58,6 +58,12 @@ describe('SERVING Beta Waitlist Landing Page', () => {
   });
 
   it('handles successful signup submission', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ result: 'success', message: "You're on the list." }),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
     render(<App />);
     
     const nameInput = screen.getByLabelText(/Your Name/i);
